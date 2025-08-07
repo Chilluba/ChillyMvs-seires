@@ -12,6 +12,20 @@ export interface TMDBProductionCompany {
   origin_country: string;
 }
 
+// YTS API specific type
+export interface YTSMovieTorrent {
+  url: string;
+  hash: string;
+  quality: string; // e.g., "720p", "1080p", "2160p" (4K), "3D"
+  type: string; // e.g., "web", "bluray"
+  seeds: number;
+  peers: number;
+  size: string;
+  size_bytes: number;
+  date_uploaded: string;
+  date_uploaded_unix: number;
+}
+
 export interface TMDBBaseMovie {
   id: number;
   title: string;
@@ -36,7 +50,7 @@ export interface TMDBMovie extends TMDBBaseMovie {
     results: TMDBVideo[];
   };
   imdb_id?: string; 
-  torrentQuality?: string; // Added for YTS torrent quality
+  torrents?: YTSMovieTorrent[]; // Array of available torrents
 }
 
 export interface TMDBPaginatedResponse<T> {

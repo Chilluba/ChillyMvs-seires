@@ -1,23 +1,10 @@
 // src/lib/tmdb.ts
-import type { TMDBMovie, TMDBPaginatedResponse, TMDBBaseMovie, TMDBTVSeries, TMDBBaseTVSeries, TMDBTvSeasonDetails, TMDBMultiPaginatedResponse, TMDBVideoResponse, TMDBGenre, TMDBDiscoverFilters } from '@/types/tmdb';
+import type { TMDBMovie, TMDBPaginatedResponse, TMDBBaseMovie, TMDBTVSeries, TMDBBaseTVSeries, TMDBTvSeasonDetails, TMDBMultiPaginatedResponse, TMDBVideoResponse, TMDBGenre, TMDBDiscoverFilters, YTSMovieTorrent } from '@/types/tmdb';
 
 const API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
 const BASE_URL = 'https://api.themoviedb.org/3';
 export const IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/';
 
-// YTS API specific type
-interface YTSMovieTorrent {
-  url: string;
-  hash: string;
-  quality: string; // e.g., "720p", "1080p", "2160p" (4K), "3D"
-  type: string; // e.g., "web", "bluray"
-  seeds: number;
-  peers: number;
-  size: string;
-  size_bytes: number;
-  date_uploaded: string;
-  date_uploaded_unix: number;
-}
 
 interface YTSMovieDetail {
   id: number;
@@ -117,77 +104,37 @@ export async function getPopularMovies(page: number = 1): Promise<TMDBPaginatedR
   return discoverMovies(page);
 }
 
-export async function getMovieDetails(movieId: number | string): Promise<TMDBMovie & { magnetLink?: string, torrentQuality?: string }> {
+export async function getMovieDetails(movieId: number | string): Promise<TMDBMovie> {
   console.log(`[TMDB Fetch] Movie Details for ID: ${movieId}`);
   const movieDetails = await fetchTMDB<TMDBMovie>(`movie/${movieId}`, { append_to_response: 'videos,external_ids' });
 
   if (movieDetails.imdb_id) {
     console.log(`[YTS Search] Attempting for IMDB ID: ${movieDetails.imdb_id} for movie: ${movieDetails.title}`);
     try {
-      // YTS API can be unreliable, use a proxy or direct if allowed.
-      // const ytsQueryUrl = `https://yts.mx/api/v2/list_movies.json?query_term=${movieDetails.imdb_id}&limit=1&sort_by=seeds&quality=1080p,720p`;
-      // For stability, let's use a broader search if specific quality fails.
-      // Prioritize 1080p, then 720p, then any with good seeds.
-      const qualitiesToTry = ['1080p', '720p', 'all']; // 'all' as a fallback
-      let bestTorrent: YTSMovieTorrent | undefined;
-      let foundQuality: string | undefined;
-
-      for (const quality of qualitiesToTry) {
-        const ytsQueryUrl = `https://yts.mx/api/v2/list_movies.json?query_term=${movieDetails.imdb_id}&limit=5&sort_by=seeds${quality !== 'all' ? `&quality=${quality}` : ''}`;
-        console.log(`[YTS Search] Query URL: ${ytsQueryUrl}`);
-        const ytsResponse = await fetch(ytsQueryUrl, { cache: 'no-store' }); // Avoid caching YTS results aggressively here
-        
-        if (!ytsResponse.ok) {
-          console.warn(`[YTS Search] API request failed for ${movieDetails.imdb_id}, quality ${quality}. Status: ${ytsResponse.status}`);
-          continue; 
-        }
+      const ytsQueryUrl = `https://yts.mx/api/v2/list_movies.json?query_term=${movieDetails.imdb_id}&limit=1`;
+      const ytsResponse = await fetch(ytsQueryUrl, { next: { revalidate: 3600 } }); // Revalidate YTS results hourly
+      
+      if (!ytsResponse.ok) {
+        console.warn(`[YTS Search] API request failed for ${movieDetails.imdb_id}. Status: ${ytsResponse.status}`);
+      } else {
         const ytsData: YTSResponse = await ytsResponse.json();
         if (ytsData.status === 'ok' && ytsData.data?.movies && ytsData.data.movies.length > 0) {
-          const movie = ytsData.data.movies[0]; // Assuming first result for the IMDB ID is the correct one
+          const movie = ytsData.data.movies[0];
           if (movie.torrents && movie.torrents.length > 0) {
-            // Sort by seeds, then by quality preference (e.g. 1080p > 720p > etc.)
-            const sortedTorrents = movie.torrents
-                .filter(t => t.seeds > 0) // Only consider torrents with seeds
-                .sort((a, b) => {
-                    if (a.quality === '1080p' && b.quality !== '1080p') return -1;
-                    if (b.quality === '1080p' && a.quality !== '1080p') return 1;
-                    if (a.quality === '720p' && b.quality !== '720p') return -1;
-                    if (b.quality === '720p' && a.quality !== '720p') return 1;
-                    return (b.seeds || 0) - (a.seeds || 0); // Fallback to seeds
-                });
-            
-            bestTorrent = sortedTorrents[0];
-            if (bestTorrent) {
-              foundQuality = bestTorrent.quality;
-              break; // Found a good torrent
-            }
+            console.log(`[YTS Search] Found ${movie.torrents.length} torrents for ${movieDetails.title}`);
+            movieDetails.torrents = movie.torrents.sort((a, b) => (b.seeds || 0) - (a.seeds || 0));
           }
+        } else {
+            console.log(`[YTS Search] No movie found on YTS for IMDB ID ${movieDetails.imdb_id}`);
         }
       }
-
-
-      if (bestTorrent) {
-        const trackers = [
-          'udp://tracker.openbittorrent.com:80/announce',
-          'udp://tracker.opentrackr.org:1337/announce',
-          'udp://tracker.torrent.eu.org:451/announce',
-          'udp://tracker.dler.org:6969/announce',
-          'udp://open.stealth.si:80/announce',
-          'udp://p4p.arenabg.com:1337/announce',
-          'udp://tracker.internetwarriors.net:1337/announce',
-        ].map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
-        const magnet = `magnet:?xt=urn:btih:${bestTorrent.hash}&dn=${encodeURIComponent(movieDetails.title)}${trackers}`;
-        console.log(`[YTS Search] Found magnet for ${movieDetails.title} (Quality: ${foundQuality}): ${magnet.substring(0, 60)}...`);
-        return { ...movieDetails, magnetLink: magnet, torrentQuality: foundQuality };
-      } else {
-        console.log(`[YTS Search] No suitable torrent found for ${movieDetails.title} via IMDB ID ${movieDetails.imdb_id}`);
-      }
     } catch (error) {
-      console.error(`[YTS Search] Error for ${movieDetails.imdb_id}:`, error);
+      console.error(`[YTS Search] Error fetching from YTS for ${movieDetails.imdb_id}:`, error);
     }
   }
   return movieDetails;
 }
+
 
 export async function getMovieVideos(movieId: number | string): Promise<TMDBVideoResponse> {
   return fetchTMDB<TMDBVideoResponse>(`movie/${movieId}/videos`);
@@ -271,11 +218,9 @@ export function getFullImagePath(filePath: string | null | undefined, size: stri
         width = 300;
         height = 450;
     }
-    const seed = `placeholder_${filePath?.replace(/[\/\.]/g, '_') || 'default'}_${size.replace(/\//g, '_')}`;
+    // Using a simple hash function to generate a seed from the filePath
+    const seed = filePath ? filePath.split('').reduce((acc, char) => char.charCodeAt(0) + ((acc << 5) - acc), 0) : 'placeholder';
     return `https://picsum.photos/seed/${seed}/${width}/${height}?grayscale&blur=1`;
   }
   return `${IMAGE_BASE_URL}${size}${filePath}`;
 }
-
-// Adding this type to tmdb.ts for MovieDownloadCard to use
-export type { YTSMovieTorrent, YTSMovieDetail, YTSResponse, YTSResponseData };

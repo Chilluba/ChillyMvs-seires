@@ -1,12 +1,10 @@
 // src/contexts/WebTorrentContext.tsx
-// This context is stubbed out as active WebTorrent functionality is removed for the UI template.
-// You can re-implement this context if you add client-side WebTorrent features later.
-import React, { createContext, useContext, ReactNode, useCallback, useState, useEffect } from 'react';
-// Types are imported from the stubbed service for consistency if UI components use them.
-import type { Torrent, TorrentProgress, HistoryItem } from '@/lib/webtorrent-service'; 
-// import type { TorrentFile as WebTorrentFile } from 'webtorrent'; // WebTorrent type not needed for stub
+import React, { createContext, useContext, ReactNode, useState, useEffect, useCallback } from 'react';
+import webTorrentService from '@/lib/webtorrent-service';
+import type { Torrent, TorrentProgress, HistoryItem } from '@/lib/webtorrent-service';
+import type { TorrentFile as WebTorrentFile } from 'webtorrent';
 
-interface WebTorrentContextTypeStub {
+interface WebTorrentContextType {
   torrents: TorrentProgress[];
   history: HistoryItem[];
   addTorrent: (magnetURI: string, itemName?: string, itemId?: string | number) => Promise<Torrent | null>;
@@ -14,18 +12,17 @@ interface WebTorrentContextTypeStub {
   pauseTorrent: (infoHashOrMagnetURI: string) => void;
   resumeTorrent: (infoHashOrMagnetURI: string) => void;
   getTorrentInstance: (infoHashOrMagnetURI: string) => Torrent | undefined;
-  getLargestFileForStreaming: (infoHashOrMagnetURI: string) => Promise<{ file: any, streamUrl: string } | null>; // 'any' for file as TorrentFile is from webtorrent
+  getLargestFileForStreaming: (infoHashOrMagnetURI: string) => Promise<{ file: WebTorrentFile, streamUrl: string } | null>;
   clearDownloadHistory: () => void;
   removeDownloadFromHistory: (infoHash: string) => void;
   isClientReady: boolean;
 }
 
-const WebTorrentContext = createContext<WebTorrentContextTypeStub | undefined>(undefined);
+const WebTorrentContext = createContext<WebTorrentContextType | undefined>(undefined);
 
-export const useWebTorrent = (): WebTorrentContextTypeStub => {
+export const useWebTorrent = (): WebTorrentContextType => {
   const context = useContext(WebTorrentContext);
   if (!context) {
-    // This error can remain as it's a structural check, even if functionality is stubbed.
     throw new Error('useWebTorrent must be used within a WebTorrentProvider');
   }
   return context;
@@ -36,32 +33,91 @@ interface WebTorrentProviderProps {
 }
 
 export const WebTorrentProvider: React.FC<WebTorrentProviderProps> = ({ children }) => {
-  const [isClientReady, setIsClientReady] = useState(false); // Still useful to indicate "ready" for UI purposes
+  const [torrents, setTorrents] = useState<TorrentProgress[]>([]);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [isClientReady, setIsClientReady] = useState(false);
 
   useEffect(() => {
-    console.log("[WebTorrentProvider] Initializing stubbed provider.");
-    // Simulate client readiness for UI template
-    setTimeout(() => setIsClientReady(true), 500);
+    const initializeClient = async () => {
+      await webTorrentService.getClient();
+      setIsClientReady(true);
+      setTorrents(webTorrentService.getAllTorrentsProgress());
+      setHistory(webTorrentService.getDownloadHistory());
+    };
+
+    initializeClient();
+
+    const unsubscribeProgress = webTorrentService.onTorrentProgress((progress) => {
+      setTorrents(prev => {
+        const index = prev.findIndex(t => t.torrentId === progress.torrentId);
+        if (index > -1) {
+          const newTorrents = [...prev];
+          newTorrents[index] = progress;
+          return newTorrents;
+        }
+        return [...prev, progress];
+      });
+    });
+
+    const unsubscribeRemoved = webTorrentService.onTorrentRemoved((infoHash) => {
+      setTorrents(prev => prev.filter(t => t.torrentId !== infoHash));
+    });
+    
+    const unsubscribeHistory = webTorrentService.onHistoryUpdated(() => {
+        setHistory(webTorrentService.getDownloadHistory());
+    });
+
+    return () => {
+      unsubscribeProgress();
+      unsubscribeRemoved();
+      unsubscribeHistory();
+    };
   }, []);
 
-  const stubFunction = useCallback(async (actionName: string, ...args: any[]) => {
-    console.log(`[WebTorrentProvider] Stubbed action "${actionName}" called with args:`, args);
-    // toast({ title: "Action (Stubbed)", description: `${actionName} is a stub in this UI template.`});
-    return null; // Or appropriate stubbed return value
+  const addTorrent = useCallback(async (magnetURI: string, itemName?: string, itemId?: string | number) => {
+    return webTorrentService.addTorrent(magnetURI, itemName, itemId);
   }, []);
 
-  const value: WebTorrentContextTypeStub = {
-    torrents: [], // Empty for template
-    history: [],  // Empty for template
-    addTorrent: (...args) => stubFunction('addTorrent', ...args) as Promise<Torrent | null>,
-    removeTorrent: (...args) => stubFunction('removeTorrent', ...args) as Promise<void>,
-    pauseTorrent: (...args) => { stubFunction('pauseTorrent', ...args); },
-    resumeTorrent: (...args) => { stubFunction('resumeTorrent', ...args); },
-    getTorrentInstance: (...args) => { stubFunction('getTorrentInstance', ...args); return undefined; },
-    getLargestFileForStreaming: (...args) => stubFunction('getLargestFileForStreaming', ...args) as Promise<any>,
-    clearDownloadHistory: () => { stubFunction('clearDownloadHistory'); },
-    removeDownloadFromHistory: (...args) => { stubFunction('removeDownloadFromHistory', ...args); },
-    isClientReady: isClientReady,
+  const removeTorrent = useCallback(async (infoHashOrMagnetURI: string) => {
+    await webTorrentService.removeTorrent(infoHashOrMagnetURI);
+  }, []);
+  
+  const pauseTorrent = useCallback((infoHashOrMagnetURI: string) => {
+    webTorrentService.pauseTorrent(infoHashOrMagnetURI);
+  }, []);
+
+  const resumeTorrent = useCallback((infoHashOrMagnetURI: string) => {
+    webTorrentService.resumeTorrent(infoHashOrMagnetURI);
+  }, []);
+
+  const getTorrentInstance = useCallback((infoHashOrMagnetURI: string) => {
+    return webTorrentService.getTorrent(infoHashOrMagnetURI);
+  }, []);
+  
+  const getLargestFileForStreaming = useCallback(async (infoHashOrMagnetURI: string) => {
+    return webTorrentService.getLargestFileForStreaming(infoHashOrMagnetURI);
+  }, []);
+
+  const clearDownloadHistory = useCallback(() => {
+    webTorrentService.clearHistory();
+  }, []);
+
+  const removeDownloadFromHistory = useCallback((infoHash: string) => {
+    webTorrentService.removeFromHistory(infoHash);
+  }, []);
+
+  const value: WebTorrentContextType = {
+    torrents,
+    history,
+    addTorrent,
+    removeTorrent,
+    pauseTorrent,
+    resumeTorrent,
+    getTorrentInstance,
+    getLargestFileForStreaming,
+    clearDownloadHistory,
+    removeDownloadFromHistory,
+    isClientReady,
   };
 
   return (
