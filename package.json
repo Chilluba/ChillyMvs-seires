@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "server:dev": "tsx watch src/server/index.ts",
     "server:start": "node dist_server/index.js",
-    "server:build": "tsc -p tsconfig.server.json"
+    "server:build": "tsc -p tsconfig.server.json",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@formatjs/intl-localematcher": "^0.5.4",

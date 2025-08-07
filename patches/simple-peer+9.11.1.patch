@@ -1,0 +1,11 @@
+diff --git a/node_modules/simple-peer/index.js b/node_modules/simple-peer/index.js
+index 957262d..8d276c1 100644
+--- a/node_modules/simple-peer/index.js
++++ b/node_modules/simple-peer/index.js
+@@ -1,5 +1,6 @@
+ /* global RTCIceCandidate, RTCPeerConnection, RTCSessionDescription, RTCDataChannel */
+ 
++var common = require('common-tags')
+ var debug = require('debug')('simple-peer')
+ var get = require('get-browser-rtc')
+ var inherits = require('inherits')
